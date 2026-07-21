@@ -1,23 +1,30 @@
-# ChessMentor ♟️ — استاد کیان
+# ChessMentor ♟️ — Master Kian / استاد کیان
 
 A web app where you play live chess against a bot while an AI coach — **Master
-Kian (استاد کیان)** — teaches you *strategy and planning* in real time. Not just
+Kian** — teaches you *strategy and planning* in real time. Not just
 "good move / bad move", but **why**, and **what the long-term plan should be**.
 
-All coaching and UI text is in **Persian (Farsi)**; the code is in English.
+The UI and coaching come in **English / Français / فارسی** (with automatic RTL for Persian);
+the code and comments are in English.
+
+![ChessMentor — playing with Master Kian, plan arrows on the board](docs/screenshot.png)
 
 - **Instant, engine-only feedback** on every move: an animated eval bar and move-quality
-  badges (✨ درخشان / 👍 خوب / ⚠️ بی‌دقتی / ❗ اشتباه / 💥 خطای بزرگ).
-- **Strategic coaching at key moments** (Claude-powered, streamed word-by-word into a
-  speech bubble) with **plan arrows** drawn on the board.
+  badges (✨ Brilliant / 👍 Good / ⚠️ Inaccuracy / ❗ Mistake / 💥 Blunder).
+- **Concise strategic coaching at key moments** — a short, to-the-point plan (LLM-powered,
+  streamed into Master Kian's speech bubble) with **plan arrows** drawn on the board.
+- **Tactical threat warnings** — a null-move scan detects what the opponent threatens and shows
+  a **red arrow**, an endangered-square glow, and a *"Careful — I can win your knight!"* banner.
 - **Ask the coach** any question about the position on demand.
-- **Adjustable opponent** (Stockfish Skill Level 0–20) with an adaptive difficulty suggestion.
-- **Session summary** with accuracy, a move-quality breakdown, and an encouraging takeaway.
-- **Trilingual UI** — English / Français / فارسی via a header toggle (with automatic RTL for
-  Persian); the coach also replies in the selected language. Choice is remembered across sessions.
-- **Take back, hint, sounds & voice** — undo the last move, ask the engine for a best-move arrow,
-  synthesized move/capture/check sounds (Web Audio), and an optional spoken coach voice
-  (Web Speech API, all three languages). All toggleable in the board toolbar.
+- **Human-like opponent** — adjustable Stockfish Skill Level (0–20) with a natural "thinking"
+  pause before it replies, plus an adaptive difficulty suggestion.
+- **Nice to play** — click-to-move *and* drag, legal-move hint dots, take back a move, a
+  best-move **hint arrow**, and captured-piece trays showing each side's losses + material lead.
+- **Sounds & coach voice** — synthesized move/capture/check sounds (Web Audio) and an optional
+  spoken coach voice (Web Speech API, all three languages). Toggleable in the board toolbar.
+- **Session summary** with an accuracy ring, a move-quality breakdown, and an encouraging takeaway.
+- **Trilingual UI** via a header toggle; the coach also replies in the selected language, and the
+  choice is remembered across sessions.
 
 ---
 
@@ -103,10 +110,13 @@ COACH_PROVIDER=local
 OPENAI_BASE_URL=http://127.0.0.1:5004/v1
 OPENAI_API_KEY=lm-studio
 LOCAL_MODEL=gemma4-12b-qat-uncensored-hauhaucs-balanced
+# LOCAL_MAX_TOKENS=1500   # give reasoning models room to finish thinking + answer
 ```
 
 `OPENAI_BASE_URL` should point at the OpenAI-compatible base (LM Studio serves it under
 `/v1`). The backend streams the model's SSE output straight through to the speech bubble.
+**Reasoning models are supported**: their internal "thinking" is streamed live (shown dimmed)
+and then replaced by the clean answer — raise `LOCAL_MAX_TOKENS` if replies get cut off.
 
 Check which provider is live at any time:
 
@@ -119,20 +129,23 @@ curl http://localhost:3001/api/health
 
 ## How to play
 
-1. Pick your color and the opponent's **Skill Level (0–20)**, then press **بازی جدید** (New Game).
-2. Drag pieces to move. Every move gets an instant quality badge and updates the eval bar.
-3. In **بازی با مربی** (Coached) mode, Master Kian speaks up at strategic turning points and
-   draws plan arrows on the board.
-4. Type a question in the coach box any time to **ask the coach** ("نقشه‌ی من چیست؟", "چرا این حرکت نه؟").
+1. Pick your language (EN / FR / فا, top-right), your color, and the opponent's **Skill Level
+   (0–20)**, then press **New game**.
+2. **Click-to-move or drag** a piece — legal targets are shown as dots. Every move gets an
+   instant quality badge and updates the eval bar.
+3. In **Coached** mode, Master Kian gives a short plan at strategic turning points (with plan
+   arrows) and warns you with a **red arrow + banner** when the opponent has a real threat.
+4. Use the board toolbar to **take back** a move, get a **hint** arrow, or toggle **sound** and
+   the **coach voice**. Type in the coach box any time to **ask** a question.
 5. At game end you get a **session summary** and, if warranted, a difficulty suggestion.
 
 ### Interaction modes
 
-| Mode | Persian | Behaviour |
-|---|---|---|
-| Coached (default) | بازی با مربی | Auto-coaching at key moments **+** on-demand questions |
-| Silent | بازی آرام | Only the eval bar and move-quality badges — no coaching |
-| Ask | پرسش از مربی | No auto-coaching; ask questions on demand |
+| Mode | Behaviour |
+|---|---|
+| Coached (default) | Auto plans + threat warnings at key moments **+** on-demand questions |
+| Silent | Only the eval bar and move-quality badges — no coaching or warnings |
+| Ask | No auto-coaching; ask questions on demand |
 
 ---
 
@@ -157,10 +170,12 @@ export const DEFAULT_TRIGGER_CONFIG = {
 Turning points also include: the opening ending, a major-piece (rook/queen) trade, and a
 pawn-structure change.
 
-**Engine strength / analysis depth** — see the depth constants at the top of
-[`client/src/store/gameStore.js`](client/src/store/gameStore.js) (`EVAL_DEPTH`,
-`COACH_DEPTH`, `COACH_MULTIPV`). Analysis for the eval bar and move quality always runs at
-full engine strength (Skill 20) regardless of the opponent's level, so feedback stays honest.
+**Engine strength / analysis depth / threat sensitivity / think time** — see the constants at
+the top of [`client/src/store/gameStore.js`](client/src/store/gameStore.js): `EVAL_DEPTH`,
+`COACH_DEPTH`, `COACH_MULTIPV`, `THREAT_DEPTH`, and `THREAT_CP` (the centipawn swing that counts
+as a threat). The opponent's human-like pause lives in the `engineThinkMs()` helper in the same
+file. Analysis for the eval bar and move quality always runs at full engine strength (Skill 20)
+regardless of the opponent's level, so feedback stays honest.
 
 ---
 
@@ -175,6 +190,8 @@ full engine strength (Skill 20) regardless of the opponent's level, so feedback 
                  │        │                                       │                        │
                  │        ├── before/after eval ──► move-quality classifier ──► toast badge│
                  │        │                                                                │
+                 │        ├── null-move scan ──► threat? ──► red arrow + "Careful!" banner   │
+                 │        │                                                                │
                  │        └── coachTrigger? ──► positionFeatures (FEN → strategic JSON)    │
                  │                                        │                                │
                  └────────────────────────────────────── │ ───────────────────────────────┘
@@ -182,7 +199,7 @@ full engine strength (Skill 20) regardless of the opponent's level, so feedback 
                                         ┌──────────── Express backend ────────────┐
                                         │  provider = Claude  |  local LM Studio   │
                                         └──────────────────── │ ───────────────────┘
-                                                              ▼  streamed Persian text
+                                                    ▼  streamed coaching text (chosen language)
                                                     Master Kian speech bubble + plan arrows
 ```
 
@@ -197,6 +214,11 @@ Key ideas:
   (see [`moveQuality.js`](client/src/analysis/moveQuality.js)).
 - **Plan arrows are the engine's own principal variation**, so they are inherently
   tactically validated — the arrows *are* the engine's chosen continuation.
+- **Threat warnings use a "null move" scan.** On your turn the app hands the move to the
+  opponent (a null move) and analyses that; if their best free move swings the eval by
+  ≥ ~2 pawns (or threatens mate), it flags the threat with a red arrow + banner.
+- **The opponent pauses like a human** before replying — a jittered delay (a bit longer in
+  tense positions) so its move is easy to follow instead of appearing instantly.
 
 ---
 
@@ -216,8 +238,9 @@ Key ideas:
         ├── analysis/         # moveQuality, positionFeatures, coachTrigger
         ├── store/gameStore.js# Zustand store — orchestrates the whole game loop
         ├── api/coach.js      # streaming fetch client
-        ├── lib/              # Persian labels + chess helpers
-        └── components/       # Board, EvalBar, CoachPanel, MoveToasts, SessionSummary, ...
+        ├── lib/              # i18n (en/fr/fa), chess helpers, sound, speech (TTS)
+        └── components/       # Board, EvalBar, CoachPanel, MoveToasts, BoardToolbar,
+                              #   ThreatBanner, CapturedPieces, LanguageToggle, SessionSummary, ...
 ```
 
 ---
@@ -239,4 +262,6 @@ Key ideas:
 - Pawn promotions auto-queen (the most common case).
 - "Backward pawn" / "bad bishop" / "outpost" detection uses pragmatic heuristics — good
   enough to give the coach concrete features to talk about, not a formal evaluation.
+- The coach voice uses the browser's built-in speech synthesis, so available voices (and
+  Persian quality in particular) depend on your OS. English/French are widely available.
 - The Stockfish WASM (~7 MB) is git-ignored and regenerated from `node_modules` on install.
