@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# build output
+client/dist/
+dist/
+
+# env / secrets
+.env
+.env.local
+server/.env
+**/.env
+
+# stockfish binaries (large; copied in via `npm run setup:stockfish`)
+client/public/stockfish/*.wasm
+client/public/stockfish/*.js
+
+# logs
+npm-debug.log*
+*.log
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# local Claude Code harness settings
+.claude/settings.local.json

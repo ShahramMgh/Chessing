@@ -1,0 +1,16 @@
+{
+  "name": "chessmentor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ChessMentor — a real-time AI chess coach that teaches strategy and planning while you play against Stockfish.",
+  "scripts": {
+    "dev": "concurrently -n client,server -c cyan,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "npm run start --prefix server",
+    "install:all": "npm install && npm install --prefix client && npm install --prefix server",
+    "setup:stockfish": "node scripts/copy-stockfish.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
