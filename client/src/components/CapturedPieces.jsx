@@ -1,41 +1,56 @@
 import { useGameStore } from '../store/gameStore.js';
 import { materialSummary } from '../lib/chessUtils.js';
 
-const GLYPH = { p: '♟', n: '♞', b: '♝', r: '♜', q: '♛' };
+const GLYPH = { q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 const ORDER = ['q', 'r', 'b', 'n', 'p'];
 
-// A tray of the pieces one side has captured, plus a "+N" material-advantage
-// badge. `edge` selects whether this is the opponent's tray (top) or yours
-// (bottom); orientation follows the player's colour.
+// Solid, distinctly-toned fills so BOTH colours read clearly on the dark tray:
+// white-lost pieces are bright, black-lost pieces are a clear gray silhouette.
+function glyphStyle(isWhite) {
+  return isWhite
+    ? { color: '#f8fafc', WebkitTextStroke: '0.5px rgba(15,23,42,0.5)' }
+    : { color: '#7c8aa5', WebkitTextStroke: '0.5px rgba(226,232,240,0.5)' };
+}
+
+// Shows the pieces a given side has LOST, grouped by type, next to that side —
+// so near "You" you see your own captured pieces. A "+N" badge marks whichever
+// side is ahead on material.
 export default function CapturedPieces({ edge }) {
   const fen = useGameStore((s) => s.fen);
   const playerColor = useGameStore((s) => s.playerColor);
   const { whiteCapturedByBlack, blackCapturedByWhite, diff } = materialSummary(fen);
 
-  // Whose tray is this, and what did they capture?
   const isPlayer = edge === 'bottom';
   const playerIsWhite = playerColor === 'w';
-  const showsWhite = isPlayer ? !playerIsWhite : playerIsWhite; // which colour of pieces sit here
+  // This tray belongs to the player (bottom) or the opponent (top); show THAT
+  // side's own lost pieces.
+  const ownerIsWhite = isPlayer ? playerIsWhite : !playerIsWhite;
+  const lost = ownerIsWhite ? whiteCapturedByBlack : blackCapturedByWhite;
+  const ownerAdvantage = ownerIsWhite ? diff : -diff;
 
-  const captured = showsWhite ? whiteCapturedByBlack : blackCapturedByWhite;
-  // Material advantage from this tray-owner's point of view.
-  const ownerAdvantage = isPlayer ? (playerIsWhite ? diff : -diff) : playerIsWhite ? -diff : diff;
-
-  const glyphTone = showsWhite ? 'text-slate-100' : 'text-slate-500';
-
-  const pieces = ORDER.flatMap((t) => Array.from({ length: captured[t] || 0 }, (_, i) => `${t}${i}`));
+  const style = glyphStyle(ownerIsWhite);
+  const anyLost = ORDER.some((t) => (lost[t] || 0) > 0);
 
   return (
-    <div className="flex h-6 items-center gap-1 px-1 text-lg leading-none">
-      <span className={`flex items-center ${glyphTone}`}>
-        {pieces.map((key) => (
-          <span key={key} className="-mr-1.5 drop-shadow-sm">
-            {GLYPH[key[0]]}
-          </span>
-        ))}
-      </span>
+    <div className="flex h-7 items-center gap-1.5">
+      <div className="flex items-center gap-1 rounded-lg bg-black/20 px-1.5 py-0.5 ring-1 ring-white/5">
+        {!anyLost && <span className="px-0.5 text-xs text-slate-600">—</span>}
+        {ORDER.map((t) => {
+          const n = lost[t] || 0;
+          if (!n) return null;
+          return (
+            <span key={t} className="flex items-center">
+              {Array.from({ length: n }).map((_, i) => (
+                <span key={i} className="-mr-[3px] text-[19px] leading-none" style={style}>
+                  {GLYPH[t]}
+                </span>
+              ))}
+            </span>
+          );
+        })}
+      </div>
       {ownerAdvantage > 0 && (
-        <span className="fa-num ml-1 rounded-md bg-white/10 px-1.5 py-0.5 text-xs font-bold text-emerald-300">
+        <span className="fa-num rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-xs font-bold text-emerald-300 ring-1 ring-emerald-400/20">
           +{ownerAdvantage}
         </span>
       )}

@@ -12,6 +12,8 @@ import MoveList from './components/MoveList.jsx';
 import CapturedPieces from './components/CapturedPieces.jsx';
 import SessionSummary from './components/SessionSummary.jsx';
 import LanguageToggle from './components/LanguageToggle.jsx';
+import BoardToolbar from './components/BoardToolbar.jsx';
+import ThreatBanner from './components/ThreatBanner.jsx';
 
 export default function App() {
   const newGame = useGameStore((s) => s.newGame);
@@ -51,11 +53,11 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1360px] grid-cols-1 gap-5 lg:grid-cols-[260px_minmax(0,1fr)_340px]">
+      <main className="mx-auto grid max-w-[1360px] grid-cols-1 items-start gap-5 lg:grid-cols-[280px_minmax(0,1fr)_360px]">
         {/* left: controls + moves */}
         <div className="flex flex-col gap-5">
           <ControlPanel />
-          <div className="hidden h-72 lg:block">
+          <div className="h-[300px]">
             <MoveList />
           </div>
         </div>
@@ -70,24 +72,21 @@ export default function App() {
               <div className="flex min-w-0 flex-1 flex-col gap-2">
                 <PlayerTag edge="top" t={t} />
                 <div className="relative">
+                  <ThreatBanner />
                   <MoveToasts />
                   <Board />
                 </div>
                 <PlayerTag edge="bottom" t={t} />
               </div>
             </div>
+            <div className="mt-3">
+              <BoardToolbar />
+            </div>
           </div>
         </div>
 
         {/* right: coach */}
-        <div className="h-[540px] lg:h-auto lg:min-h-[560px]">
-          <CoachPanel />
-        </div>
-
-        {/* moves on small screens */}
-        <div className="h-56 lg:hidden">
-          <MoveList />
-        </div>
+        <CoachPanel />
       </main>
 
       <SessionSummary />

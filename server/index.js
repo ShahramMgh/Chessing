@@ -40,7 +40,14 @@ app.post('/api/coach', async (req, res) => {
   }
 
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  // Abort the upstream LLM request only if the CLIENT actually disconnects
+  // mid-stream. We must watch `res` (not `req`): in modern Node, `req`'s "close"
+  // fires as soon as the small POST body is fully read, which would otherwise
+  // abort the LLM request immediately — before it ever responds.
+  let finished = false;
+  res.on('close', () => {
+    if (!finished) controller.abort('client-closed');
+  });
 
   try {
     const userMessage = buildUserMessage(req.body || {});
@@ -50,8 +57,10 @@ app.post('/api/coach', async (req, res) => {
       onText: (delta) => res.write(delta),
       signal: controller.signal,
     });
+    finished = true;
     res.end();
   } catch (err) {
+    finished = true;
     if (controller.signal.aborted) return; // client left; nothing to report
     console.error('[coach] error:', err?.status, err?.message || err);
     try {

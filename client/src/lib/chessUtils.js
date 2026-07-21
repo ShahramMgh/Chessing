@@ -6,6 +6,27 @@ export function sideToMove(fen) {
   return fen.split(' ')[1] || 'w';
 }
 
+/**
+ * Build the "null move" FEN: same board, but hand the move to the other side
+ * (and clear en-passant). Analysing this reveals what the opponent THREATENS if
+ * you do nothing. Returns null if the resulting position is illegal or over.
+ * @param {string} fen
+ */
+export function nullMoveFen(fen) {
+  const p = fen.split(' ');
+  if (p.length < 6) return null;
+  p[1] = p[1] === 'w' ? 'b' : 'w';
+  p[3] = '-';
+  const nf = p.join(' ');
+  try {
+    const c = new Chess(nf);
+    if (c.isGameOver()) return null;
+    return nf;
+  } catch {
+    return null; // illegal (e.g. the side that just "passed" was giving check)
+  }
+}
+
 const PIECE_VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 const FULL_SET = { p: 8, n: 2, b: 2, r: 2, q: 1 };
 

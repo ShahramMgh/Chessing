@@ -16,6 +16,12 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
+// Control markers in the coach text stream so the UI can distinguish a reasoning
+// model's live "thinking" from its final answer. These are ASCII control chars
+// (SOH / STX) that never appear in normal model output; the client strips them.
+export const THINK_MARK = String.fromCharCode(1); // thinking begins → show dimmed
+export const ANSWER_MARK = String.fromCharCode(2); // answer begins → clear thinking, show clean
+
 function pickProviderName() {
   if (process.env.COACH_PROVIDER) return process.env.COACH_PROVIDER.toLowerCase();
   if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
@@ -35,6 +41,9 @@ function makeAnthropicProvider() {
     model,
     enabled,
     async stream({ system, userMessage, onText, signal }) {
+      // Claude streams the answer directly (no separate "thinking" channel here),
+      // so mark the answer up-front — the UI then renders it as a clean reply.
+      onText(ANSWER_MARK);
       const s = client.messages.stream({
         model,
         max_tokens: 1024,
@@ -64,6 +73,9 @@ function makeLocalProvider() {
   const baseUrl = normaliseBaseUrl(process.env.OPENAI_BASE_URL);
   const model = process.env.LOCAL_MODEL || 'gemma4-12b-qat-uncensored-hauhaucs-balanced';
   const apiKey = process.env.OPENAI_API_KEY || 'lm-studio'; // LM Studio ignores the value
+  // Reasoning models spend a lot of tokens "thinking" before the visible answer.
+  // Give enough budget for a real answer but keep it bounded. Tunable via env.
+  const maxTokens = Number(process.env.LOCAL_MAX_TOKENS) || 1500;
 
   return {
     name: `local (${model})`,
@@ -81,7 +93,7 @@ function makeLocalProvider() {
           model,
           stream: true,
           temperature: 0.7,
-          max_tokens: 1024,
+          max_tokens: maxTokens,
           messages: [
             { role: 'system', content: system },
             { role: 'user', content: userMessage },
@@ -95,12 +107,22 @@ function makeLocalProvider() {
       }
 
       // Parse the OpenAI-style SSE stream: lines of `data: {json}` / `data: [DONE]`.
+      // Reasoning models split output into `reasoning_content` (internal thinking)
+      // and `content` (the visible answer). Rather than hide the (often long)
+      // thinking behind a spinner, we stream it live behind a THINK marker so the
+      // UI shows it dimmed, then emit an ANSWER marker when the real answer starts
+      // so the UI clears the thinking and shows a clean reply. If the model only
+      // ever reasons, the thinking simply remains as the response.
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      let sawContent = false;
+      let sawReasoning = false;
+      let done = false;
+
+      while (!done) {
+        const { done: streamDone, value } = await reader.read();
+        if (streamDone) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? ''; // keep the (possibly partial) last line
@@ -108,15 +130,36 @@ function makeLocalProvider() {
           const trimmed = line.trim();
           if (!trimmed.startsWith('data:')) continue;
           const data = trimmed.slice(5).trim();
-          if (data === '[DONE]') return;
+          if (data === '[DONE]') {
+            done = true;
+            break;
+          }
           try {
-            const json = JSON.parse(data);
-            const delta = json.choices?.[0]?.delta?.content;
-            if (delta) onText(delta);
+            const delta = JSON.parse(data).choices?.[0]?.delta || {};
+            if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length) {
+              if (!sawReasoning) {
+                sawReasoning = true;
+                onText(THINK_MARK);
+              }
+              onText(delta.reasoning_content);
+            }
+            if (typeof delta.content === 'string' && delta.content.length) {
+              if (!sawContent) {
+                sawContent = true;
+                onText(ANSWER_MARK);
+              }
+              onText(delta.content);
+            }
           } catch {
             /* ignore keep-alive / partial lines */
           }
         }
+      }
+
+      // Model produced no visible answer at all → make sure the UI shows
+      // something by promoting the thinking (if any) to the answer.
+      if (!sawContent && !sawReasoning) {
+        onText(ANSWER_MARK);
       }
     },
   };

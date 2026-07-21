@@ -10,8 +10,19 @@ export default function Board() {
   const playerColor = useGameStore((s) => s.playerColor);
   const lastMove = useGameStore((s) => s.lastMove);
   const arrows = useGameStore((s) => s.coach.arrows);
+  const hintArrow = useGameStore((s) => s.hintArrow);
+  const threat = useGameStore((s) => s.threat);
   const onPlayerDrop = useGameStore((s) => s.onPlayerDrop);
   const movesFrom = useGameStore((s) => s.movesFrom);
+
+  // Coach plan arrows (indigo), the on-demand hint arrow (green), and the
+  // opponent's threat arrow (red) rendered together.
+  const allArrows = useMemo(() => {
+    const a = [...(arrows || [])];
+    if (hintArrow) a.push([hintArrow.from, hintArrow.to, 'rgba(34, 197, 94, 0.95)']);
+    if (threat) a.push([threat.from, threat.to, 'rgba(239, 68, 68, 0.92)']);
+    return a;
+  }, [arrows, hintArrow, threat]);
 
   const [selected, setSelected] = useState(null);
   const [hints, setHints] = useState([]);
@@ -59,8 +70,16 @@ export default function Board() {
             backgroundImage: 'radial-gradient(circle, rgba(99,102,241,0.6) 20%, transparent 21%)',
           };
     }
+    // Flag the endangered piece under a threat.
+    if (threat?.square) {
+      styles[threat.square] = {
+        ...styles[threat.square],
+        background: 'rgba(239, 68, 68, 0.42)',
+        boxShadow: 'inset 0 0 0 3px rgba(239,68,68,0.85)',
+      };
+    }
     return styles;
-  }, [lastMove, selected, hints]);
+  }, [lastMove, selected, hints, threat]);
 
   const tryMove = (from, to) => {
     const ok = onPlayerDrop(from, to);
@@ -101,14 +120,14 @@ export default function Board() {
           setSelected(square);
           setHints(moves);
         }}
-        customArrows={arrows}
+        customArrows={allArrows}
         customArrowColor="rgba(129, 140, 248, 0.9)"
         customSquareStyles={squareStyles}
         customBoardStyle={{ borderRadius: '12px', boxShadow: '0 30px 70px -20px rgba(0,0,0,0.7)' }}
         customDarkSquareStyle={{ backgroundColor: '#6c9350' }}
         customLightSquareStyle={{ backgroundColor: '#e9edcc' }}
         customDropSquareStyle={{ boxShadow: 'inset 0 0 0 4px rgba(99,102,241,0.7)' }}
-        animationDuration={220}
+        animationDuration={300}
       />
     </div>
   );

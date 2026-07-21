@@ -15,6 +15,9 @@ All coaching and UI text is in **Persian (Farsi)**; the code is in English.
 - **Session summary** with accuracy, a move-quality breakdown, and an encouraging takeaway.
 - **Trilingual UI** — English / Français / فارسی via a header toggle (with automatic RTL for
   Persian); the coach also replies in the selected language. Choice is remembered across sessions.
+- **Take back, hint, sounds & voice** — undo the last move, ask the engine for a best-move arrow,
+  synthesized move/capture/check sounds (Web Audio), and an optional spoken coach voice
+  (Web Speech API, all three languages). All toggleable in the board toolbar.
 
 ---
 

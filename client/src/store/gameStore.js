@@ -2,20 +2,26 @@ import { create } from 'zustand';
 import { Chess } from 'chess.js';
 import { getEngine } from '../engine/stockfishEngine.js';
 import { uciToMove } from '../engine/uci.js';
-import { classifyMove } from '../analysis/moveQuality.js';
+import { classifyMove, scoreToCp } from '../analysis/moveQuality.js';
 import { extractFeatures } from '../analysis/positionFeatures.js';
 import { evaluateTrigger, DEFAULT_TRIGGER_CONFIG } from '../analysis/coachTrigger.js';
-import { sideToMove, toWhiteScore, pvToSan, pvToArrows } from '../lib/chessUtils.js';
+import { sideToMove, toWhiteScore, pvToSan, pvToArrows, nullMoveFen } from '../lib/chessUtils.js';
 import { formatEval, getDict } from '../lib/i18n.js';
 import { streamCoach } from '../api/coach.js';
+import { sfx } from '../lib/sound.js';
+import { speak, stopSpeaking } from '../lib/speech.js';
 
-const savedLang =
-  (typeof localStorage !== 'undefined' && localStorage.getItem('cm_lang')) || 'en';
+const ls = (k, d) => (typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null) ?? d;
+const savedLang = ls('cm_lang', 'en');
+const savedSound = ls('cm_sound', 'on') !== 'off';
+const savedVoice = ls('cm_voice', 'off') === 'on';
 
 // Depth budgets — shallow enough to feel instant, deep enough to be honest.
 const EVAL_DEPTH = 12; // eval bar, move quality, plan baseline
 const COACH_DEPTH = 14; // richer analysis behind a coaching moment
 const COACH_MULTIPV = 3;
+const THREAT_DEPTH = 11; // null-move scan for "the opponent threatens ..."
+const THREAT_CP = 220; // swing (cp) that counts as a real threat worth warning about
 
 const engine = getEngine();
 
@@ -66,6 +72,14 @@ export const useGameStore = create((set, get) => ({
   mode: 'coached', // 'silent' | 'coached' | 'ask'
   skill: 5,
   lang: savedLang, // 'en' | 'fr' | 'fa'
+  soundOn: savedSound,
+  voiceOn: savedVoice,
+
+  // --- hint (best-move arrow shown on demand) ---
+  hintArrow: null, // { from, to } | null
+
+  // --- tactical threat warning ("Careful — I can win your knight!") ---
+  threat: null, // { from, to, square, message } | null
 
   // --- evaluation / feedback ---
   evalCp: 0,
@@ -77,6 +91,7 @@ export const useGameStore = create((set, get) => ({
     open: false,
     streaming: false,
     text: '',
+    preview: false, // true while showing a reasoning model's live "thinking"
     arrows: [],
     error: null,
     reason: null,
@@ -110,11 +125,14 @@ export const useGameStore = create((set, get) => ({
     prevFeatures = null;
     prevEvalCp = 0;
     if (coachAbort) coachAbort.abort();
+    stopSpeaking();
 
     set({
       fen: game.fen(),
       history: [],
       lastMove: null,
+      hintArrow: null,
+      threat: null,
       playerColor,
       status: 'playing',
       result: null,
@@ -126,7 +144,15 @@ export const useGameStore = create((set, get) => ({
       stats: START_STATS(),
       skill: skill ?? get().skill,
       started: true,
-      coach: { open: false, streaming: false, text: '', arrows: [], error: null, reason: null },
+      coach: {
+        open: false,
+        streaming: false,
+        text: '',
+        preview: false,
+        arrows: [],
+        error: null,
+        reason: null,
+      },
     });
 
     await get().initEngine();
@@ -157,6 +183,74 @@ export const useGameStore = create((set, get) => ({
     set({ lang });
   },
 
+  setSoundOn(on) {
+    try {
+      localStorage.setItem('cm_sound', on ? 'on' : 'off');
+    } catch {
+      /* ignore */
+    }
+    set({ soundOn: on });
+  },
+
+  setVoiceOn(on) {
+    try {
+      localStorage.setItem('cm_voice', on ? 'on' : 'off');
+    } catch {
+      /* ignore */
+    }
+    if (!on) stopSpeaking();
+    set({ voiceOn: on });
+  },
+
+  // Play the appropriate sound for a just-applied move (respecting the toggle).
+  _moveSound(res) {
+    if (!get().soundOn || !res) return;
+    if (res.captured) sfx.capture();
+    else sfx.move();
+    if (game.inCheck()) sfx.check();
+  },
+
+  // Take back the last full move (your move + the engine's reply) so it is your
+  // turn again at the earlier position.
+  takeback() {
+    const s = get();
+    if (s.status !== 'playing' || s.thinking) return;
+    if (game.turn() !== s.playerColor) return; // only on your own turn
+    if (game.history().length < 2) return; // nothing meaningful to undo yet
+    game.undo(); // engine's reply
+    game.undo(); // your move
+    const verbose = game.history({ verbose: true });
+    const last = verbose.length ? verbose[verbose.length - 1] : null;
+    if (coachAbort) coachAbort.abort('superseded');
+    stopSpeaking();
+    set((st) => ({
+      fen: game.fen(),
+      history: buildHistory(st.history),
+      lastMove: last ? { from: last.from, to: last.to } : null,
+      hintArrow: null,
+      threat: null,
+      coach: { ...st.coach, arrows: [], streaming: false },
+    }));
+    if (get().soundOn) sfx.move();
+    get()._analyzeForTurn();
+  },
+
+  // Show the engine's best move as an arrow on the board (a "hint").
+  async hint() {
+    const s = get();
+    if (!s.engineReady || s.status !== 'playing' || s.thinking) return;
+    if (game.turn() !== s.playerColor) return;
+    const fen = game.fen();
+    const res = await engine.analyze(fen, { depth: 14, multipv: 1 });
+    // Position may have changed while analysing.
+    if (game.fen() !== fen) return;
+    const uci = res.bestmove || res.lines?.[0]?.move;
+    const mv = uci && uciToMove(uci);
+    if (!mv) return;
+    set({ hintArrow: { from: mv.from, to: mv.to } });
+    if (get().soundOn) sfx.hint();
+  },
+
   // ---------------------------------------------------------------------
   //  Player move (called synchronously by react-chessboard; returns bool)
   // ---------------------------------------------------------------------
@@ -179,8 +273,11 @@ export const useGameStore = create((set, get) => ({
       fen: game.fen(),
       lastMove: { from, to },
       history: buildHistory(s.history),
+      hintArrow: null,
+      threat: null,
       coach: { ...s.coach, arrows: [] },
     });
+    get()._moveSound(moveResult);
 
     // Everything else (quality, eval, engine reply, coaching) runs async.
     get()._afterPlayerMove(prevFen, moveResult);
@@ -254,7 +351,15 @@ export const useGameStore = create((set, get) => ({
     set({ thinking: true });
     try {
       const fen = game.fen();
+      const startedAt = performance.now();
       const { bestmove } = await engine.chooseMove(fen, { skill: get().skill });
+
+      // Pause like a human before playing, so the move is easy to follow instead
+      // of appearing instantly. The engine's own search time counts toward this.
+      const target = engineThinkMs(get().skill);
+      const elapsed = performance.now() - startedAt;
+      if (elapsed < target) await delay(target - elapsed);
+
       if (bestmove) {
         const mv = uciToMove(bestmove);
         const res = game.move(mv);
@@ -264,6 +369,7 @@ export const useGameStore = create((set, get) => ({
             lastMove: { from: res.from, to: res.to },
             history: buildHistory(st.history),
           }));
+          get()._moveSound(res);
         }
       }
     } catch (err) {
@@ -317,6 +423,63 @@ export const useGameStore = create((set, get) => ({
 
     prevFeatures = features;
     prevEvalCp = whiteCp;
+
+    // Look for a concrete tactical threat the opponent could unleash.
+    get()._detectThreat(fen, analysis.white);
+  },
+
+  // Detect what the opponent THREATENS if the player does nothing (a "null move"
+  // scan) and, if it's serious, warn with a red arrow + banner.
+  async _detectThreat(fen, whiteScoreNow) {
+    const st = get();
+    if (st.mode === 'silent' || st.status !== 'playing') return;
+    if (game.inCheck()) return set({ threat: null }); // player must already respond
+    const nf = nullMoveFen(fen);
+    if (!nf) return set({ threat: null });
+
+    let na;
+    try {
+      na = await analyzeWhite(nf, { depth: THREAT_DEPTH, multipv: 1 });
+    } catch {
+      return;
+    }
+    // Bail if the position moved on while we were analysing.
+    if (game.fen() !== fen || get().status !== 'playing') return;
+
+    const top = na.top;
+    if (!top || !top.move) return set({ threat: null });
+
+    const playerColor = get().playerColor;
+    const playerNow = playerCpFromWhite(whiteScoreNow, playerColor);
+    const playerAfterNull = playerCpFromWhite(na.white, playerColor);
+    const swing = playerNow - playerAfterNull;
+    const mateThreat = top.mate != null && top.mate > 0; // opponent forces mate
+
+    if (!mateThreat && swing < THREAT_CP) return set({ threat: null });
+
+    // Describe the threatening move.
+    const mv = uciToMove(top.move);
+    let captured = null;
+    let gaveCheck = false;
+    try {
+      const c = new Chess(nf);
+      const r = c.move(mv);
+      if (r) {
+        captured = r.captured || null;
+        gaveCheck = c.inCheck();
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const dict = getDict(get().lang);
+    let message;
+    if (mateThreat) message = dict.threat.mate;
+    else if (captured) message = dict.threat.capture.replace('{piece}', dict.pieces[captured] || '');
+    else if (gaveCheck) message = dict.threat.check;
+    else message = dict.threat.general;
+
+    set({ threat: { from: mv.from, to: mv.to, square: captured ? mv.to : null, message } });
   },
 
   // ---------------------------------------------------------------------
@@ -325,18 +488,20 @@ export const useGameStore = create((set, get) => ({
   async requestCoach({ reason = 'periodic check-in', userQuestion = null } = {}) {
     if (!get().engineReady) return;
     if (coachAbort) coachAbort.abort('superseded');
+    stopSpeaking();
     const controller = new AbortController();
     coachAbort = controller;
 
     // Safety net: never let the bubble spin forever if the LLM is slow or
-    // unreachable (e.g. LM Studio not running).
-    const timeout = setTimeout(() => controller.abort('timeout'), 60000);
+    // unreachable. Local reasoning models can think for a while before the
+    // answer streams, so allow a generous window.
+    const timeout = setTimeout(() => controller.abort('timeout'), 180000);
 
     const fen = game.fen();
     lastCoachedPly = game.history().length;
 
     set((st) => ({
-      coach: { ...st.coach, open: true, streaming: true, text: '', error: null, reason },
+      coach: { ...st.coach, open: true, streaming: true, text: '', preview: false, error: null, reason },
     }));
 
     try {
@@ -377,11 +542,32 @@ export const useGameStore = create((set, get) => ({
 
       await streamCoach(
         payload,
-        (chunk) => set((st) => ({ coach: { ...st.coach, text: st.coach.text + chunk } })),
+        (chunk) =>
+          set((st) => {
+            let { text, preview } = st.coach;
+            // Interpret the control markers from the backend:  = thinking
+            // begins (show dimmed),  = answer begins (clear + show clean).
+            for (const ch of chunk) {
+              if (ch === '') {
+                preview = true;
+                text = '';
+              } else if (ch === '') {
+                preview = false;
+                text = '';
+              } else {
+                text += ch;
+              }
+            }
+            return { coach: { ...st.coach, text, preview } };
+          }),
         controller.signal
       );
       clearTimeout(timeout);
-      set((st) => ({ coach: { ...st.coach, streaming: false } }));
+      // Promote any lingering "thinking" to a normal (un-dimmed) answer.
+      set((st) => ({ coach: { ...st.coach, streaming: false, preview: false } }));
+      // Read the answer aloud if the coach voice is enabled.
+      const finalText = get().coach.text;
+      if (get().voiceOn && finalText) speak(finalText, get().lang);
     } catch (err) {
       clearTimeout(timeout);
       // Superseded by a newer request → stay quiet and let that one drive the UI.
@@ -407,6 +593,12 @@ export const useGameStore = create((set, get) => ({
 
   closeCoach() {
     set((st) => ({ coach: { ...st.coach, open: false } }));
+  },
+
+  // Read the coach's current message aloud on demand (speaker button).
+  replayCoach() {
+    const text = get().coach.text;
+    if (text) speak(text, get().lang);
   },
 
   // ---------------------------------------------------------------------
@@ -467,6 +659,7 @@ export const useGameStore = create((set, get) => ({
       reason = 'draw';
     }
     set({ status: 'over', result: { outcome, reason }, thinking: false });
+    if (get().soundOn) sfx.gameEnd();
     get()._computeSuggestion();
   },
 
@@ -496,6 +689,25 @@ export const useGameStore = create((set, get) => ({
 
 function negate(v) {
   return v == null ? null : -v;
+}
+
+// Convert a White-perspective score into a single centipawn number from the
+// player's point of view (positive = good for the player).
+function playerCpFromWhite(whiteScore, playerColor) {
+  const cp = scoreToCp(whiteScore);
+  return playerColor === 'w' ? cp : -cp;
+}
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// A natural, human-like "thinking" time (ms) before the engine plays: a base
+// pause plus jitter so it varies move to move, a little longer at higher levels,
+// and extra when the position is tense (the engine is in check).
+function engineThinkMs(skill) {
+  let t = 900 + Math.random() * 1600; // ~0.9s .. 2.5s
+  t += skill * 40; // stronger opponents mull a bit longer
+  if (game.inCheck()) t += 500; // think harder when in check
+  return Math.min(4000, t);
 }
 
 function lastSan() {

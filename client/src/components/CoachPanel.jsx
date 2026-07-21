@@ -1,5 +1,6 @@
 import { useGameStore } from '../store/gameStore.js';
 import { useI18n } from '../lib/useI18n.js';
+import { speechSupported } from '../lib/speech.js';
 import AskCoach from './AskCoach.jsx';
 
 // Master Kian — the coach avatar + speech bubble. Streams the explanation
@@ -8,16 +9,17 @@ export default function CoachPanel() {
   const coach = useGameStore((s) => s.coach);
   const mode = useGameStore((s) => s.mode);
   const started = useGameStore((s) => s.started);
+  const replayCoach = useGameStore((s) => s.replayCoach);
   const { t } = useI18n();
 
   const bubbleText = coach.text || (mode === 'silent' ? '' : t.coachIntro);
 
   return (
-    <div className="panel flex h-full flex-col p-4">
+    <div className="panel flex flex-col p-4">
       {/* header */}
       <div className="mb-3 flex items-center gap-3">
         <Avatar speaking={coach.streaming} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="font-extrabold text-slate-100">{t.coachName}</div>
           <div className="text-xs text-slate-400">
             {coach.streaming ? (
@@ -29,18 +31,30 @@ export default function CoachPanel() {
             )}
           </div>
         </div>
+        {speechSupported() && coach.text && !coach.preview && (
+          <button
+            onClick={replayCoach}
+            title={t.listen}
+            className="shrink-0 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-slate-300 transition hover:bg-white/10"
+          >
+            🔊
+          </button>
+        )}
       </div>
 
       {/* speech bubble */}
-      <div className="relative flex-1">
+      <div className="relative">
         <div className="absolute -top-2 h-4 w-4 rotate-45 rounded-sm bg-ink-900/90 ring-1 ring-white/10 ltr:left-5 rtl:right-5" />
-        <div className="animate-bubble-pop relative h-full overflow-y-auto thin-scroll rounded-2xl bg-ink-900/90 p-4 text-[15px] leading-[1.9] text-slate-100 ring-1 ring-white/10">
+        <div className="animate-bubble-pop relative max-h-[320px] min-h-[104px] overflow-y-auto thin-scroll rounded-2xl bg-ink-900/90 p-4 text-[15px] leading-[1.9] text-slate-100 ring-1 ring-white/10">
           {mode === 'silent' && !coach.text ? (
             <p className="text-slate-400">{t.silentModeMessage}</p>
           ) : coach.error ? (
             <p className="text-red-300">{coach.error}</p>
           ) : (
-            <p className="whitespace-pre-wrap">
+            <p className={`whitespace-pre-wrap ${coach.preview ? 'italic text-slate-400' : ''}`}>
+              {coach.preview && (
+                <span className="mb-1 block text-xs not-italic text-indigo-300/80">💭 {t.coachThinking}</span>
+              )}
               {bubbleText}
               {coach.streaming && (
                 <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-blink rounded-sm bg-indigo-300" />
